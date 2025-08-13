@@ -18,6 +18,7 @@
 
 from pathlib import Path
 import os
+import yaml, math
 
 from launch import LaunchDescription
 from launch.actions import (
@@ -30,6 +31,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 from moveit_configs_utils import MoveItConfigsBuilder
+
 
 def generate_launch_description():
 
@@ -118,18 +120,12 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(os.path.join(moveit_launch_dir, "move_group.launch.py")),
     )
     # -------------------------------------------------------------------------
-    # 5) Re‑build the *same* MoveIt config so we can share it with a helper node
+    # 5) Rviz: Re‑build the *same* MoveIt config so we can share it with Rviz
     # -------------------------------------------------------------------------
 
     moveit_config = (
         MoveItConfigsBuilder(robot_name="ur", package_name="ur20_workcell_moveit_config")
         .robot_description_semantic(Path("config") / "ur.srdf")
-        # .moveit_cpp(
-        #     file_path=os.path.join(
-        #         get_package_share_directory("pilz_demo"),
-        #         "config/pilz_demo.yaml",
-        #     )
-        # )
         .to_moveit_configs()
     )
     # RViz
@@ -151,6 +147,65 @@ def generate_launch_description():
     )
 
     # MoveGroupInterface demo executable
+    # ---------------------------------------------------------------------
+    # How to override NodeOptions-backed parameters
+    # From launch:
+    #   ros2 launch behav3d_demo behav3d_demo_launch.launch.py \
+    #     group:=ur_arm root_link:=world eef_link:=femto__depth_optical_frame \
+    #     planning_pipeline:=pilz_industrial_motion_planner \
+    #     max_velocity_scale:=0.35 max_accel_scale:=0.25 debug:=true \
+    #     robot_prefix:=ur20 output_dir:=~/behav3d_ws/captures \
+    #     capture_delay_sec:=0.6 calib_timeout_sec:=2.0
+    # Directly (no launch):
+    #   ros2 run behav3d_demo demo --ros-args \
+    #     -p group:=ur_arm -p root_link:=world -p eef_link:=femto__depth_optical_frame \
+    #     -p planning_pipeline:=pilz_industrial_motion_planner \
+    #     -p max_velocity_scale:=0.35 -p max_accel_scale:=0.25 -p debug:=true \
+    #     -p robot_prefix:=ur20 -p output_dir:=~/behav3d_ws/captures \
+    #     -p capture_delay_sec:=0.6 -p calib_timeout_sec:=2.0
+
+    # -------------------------------------------------------------------------
+    # 6) Load frame transforms if there is hand-eye calibration
+    # -------------------------------------------------------------------------
+
+    update_tf_nodes = []
+    try:
+        cfg_path = os.path.join(
+            get_package_share_directory("ur20_workcell"),
+            "config", "update_tf.yaml"
+        )
+        if os.path.exists(cfg_path):
+            cfg = yaml.safe_load(open(cfg_path, "r")) or {}
+
+            # Single TF entry
+            parent = cfg.get("parent_frame", "ur20_tool0")
+            child  = cfg.get("child_frame", "femto__ir_optical_frame_calib")
+            x, y, z = (cfg.get("xyz") or [0.0, 0.0, 0.0])
+
+            args = ["--frame-id", parent, "--child-frame-id", child,
+                    "--x", str(x), "--y", str(y), "--z", str(z)]
+
+            if "rpy" in cfg:
+                r, p, yw = cfg["rpy"]
+                args += ["--roll", str(r), "--pitch", str(p), "--yaw", str(yw)]
+            elif "quat" in cfg:
+                qx, qy, qz, qw = cfg["quat"]
+                args += ["--qx", str(qx), "--qy", str(qy), "--qz", str(qz), "--qw", str(qw)]
+            else:
+                # default orientation: identity
+                args += ["--qx", "0", "--qy", "0", "--qz", "0", "--qw", "1"]
+
+            update_tf_nodes.append(Node(
+                package="tf2_ros",
+                executable="static_transform_publisher",
+                name="camera_extrinsics_tf",
+                arguments=args,
+                output="log",
+            ))
+    except Exception:
+        pass
+
+    # Run Main Node
     move_group_demo = Node(
         name="behav3d_demo",
         package="behav3d_demo",
@@ -174,6 +229,7 @@ def generate_launch_description():
             moveit_stack,
             orbbec_camera,
             rviz_node,
-            move_group_demo
+            move_group_demo,
+            *update_tf_nodes
         ]
     )

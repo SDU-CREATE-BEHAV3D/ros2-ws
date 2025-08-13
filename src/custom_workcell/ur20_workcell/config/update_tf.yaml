@@ -1,0 +1,17 @@
+# Single TF using RPY
+parent_frame: ur20_tool0
+child_frame: femto__ir_optical_frame_calib
+xyz: [-0.20, 0.0, 0.0]        # meters
+rpy: [0.0, 0.0, 0.0]          # radians (roll, pitch, yaw)
+
+# --- OR (reference) ---
+# Multiple TFs
+# static_tfs:
+#   - parent_frame: ur20_tool0
+#     child_frame: femto__ir_optical_frame_calib
+#     xyz: [-0.20, 0.0, 0.0]
+#     rpy: [0.0, 0.0, 0.0]
+#   - parent_frame: femto__ir_optical_frame_calib
+#     child_frame: femto__depth_optical_frame_calib
+#     xyz: [0.0, 0.0, 0.0]
+#     quat: [0.0, 0.0, 0.0, 1.0]
