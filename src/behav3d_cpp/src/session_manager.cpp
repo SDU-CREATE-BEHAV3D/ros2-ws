@@ -60,6 +60,11 @@ namespace fs = std::filesystem;
 namespace behav3d::session_manager
 {
 
+  // Robot link naming: driven by the `robot_prefix` parameter declared in the constructor.
+  // This makes the "*_tool0" link configurable from CLI/launch.
+  static std::string g_robot_prefix = "ur10e";
+  static inline std::string tool0Link() { return g_robot_prefix + "_tool0"; }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Helpers (local to this translation unit)
   // ─────────────────────────────────────────────────────────────────────────────
@@ -134,8 +139,28 @@ namespace behav3d::session_manager
         home_joints_rad_(std::move(home_joints_rad))
   {
     RCLCPP_INFO(this->get_logger(), "[SessionManager] initialized");
+    // Declare robot_prefix parameter once (default: "ur10e") and store it
+    g_robot_prefix = this->declare_parameter<std::string>("robot_prefix", "ur10e");
+    RCLCPP_INFO(this->get_logger(), "[SessionManager] robot_prefix: %s", g_robot_prefix.c_str());
     // Where to create session directories (keep same default as CameraManager)
     output_dir_ = this->declare_parameter<std::string>("output_dir", "~/behav3d_ws/captures");
+
+    // Declare home_joints_deg parameter with empty vector default
+    std::vector<double> home_joints_deg = this->declare_parameter<std::vector<double>>(
+        "home_joints_deg", std::vector<double>{});
+
+    // If home_joints_rad_ not provided, convert home_joints_deg to radians or fallback to default
+    if (!home_joints_rad_)
+    {
+      if (home_joints_deg.empty())
+      {
+        home_joints_deg = {0.0, -120.0, 120.0, -90.0, 90.0, -180.0};
+      }
+      home_joints_rad_.emplace();
+      home_joints_rad_->reserve(home_joints_deg.size());
+      for (double deg : home_joints_deg)
+        home_joints_rad_->push_back(deg * (3.14159265358979323846 / 180.0));
+    }
   }
 
   bool SessionManager::initSession(const Options &opts)
@@ -241,7 +266,7 @@ namespace behav3d::session_manager
         // Log attempt with current state & no files
         auto js = ctrl_->getCurrentJointState();
         auto eef = ctrl_->getCurrentPose();
-        auto tool0 = ctrl_->getCurrentPose("ur20_tool0");
+        auto tool0 = ctrl_->getCurrentPose(tool0Link());
         behav3d::camera_manager::CameraManager::FilePaths files{};
         writeManifestLine(i, tgt, files, js, tool0, eef,
                           /*plan_ok=*/false, /*exec_ok=*/false, /*cap_ok=*/false,
@@ -270,7 +295,7 @@ namespace behav3d::session_manager
 
       // ---------------- LOG ----------------
       auto js = ctrl_->getCurrentJointState();
-      auto tool0 = ctrl_->getCurrentPose("ur20_tool0");
+      auto tool0 = ctrl_->getCurrentPose(tool0Link());
       auto eef = ctrl_->getCurrentPose(ctrl_->getEefLink());
 
       writeManifestLine(i, tgt, files, js, tool0, eef,
@@ -334,22 +359,9 @@ namespace behav3d::session_manager
 
   void SessionManager::goHome()
   {
-    std::vector<double> home_rad;
-    if (home_joints_rad_)
+    if (ctrl_ && home_joints_rad_)
     {
-      home_rad = *home_joints_rad_;
-    }
-    else
-    {
-      // Same default as demo.cpp
-      const std::vector<double> home_deg = {45.0, -120.0, 120.0, -90.0, 90.0, -180.0};
-      home_rad.reserve(home_deg.size());
-      for (double d : home_deg)
-        home_rad.push_back(d * (3.14159265358979323846 / 180.0));
-    }
-    if (ctrl_)
-    {
-      if (auto traj = ctrl_->planJoints(home_rad))
+      if (auto traj = ctrl_->planJoints(*home_joints_rad_))
       {
         (void)ctrl_->executeTrajectory(traj, /*apply_totg=*/false);
       }

@@ -29,6 +29,7 @@
 #include <moveit/robot_trajectory/robot_trajectory.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <moveit/kinematic_constraints/utils.hpp>
+#include <optional>
 
 namespace rt = robot_trajectory;
 using RobotTrajectory = rt::RobotTrajectory;
@@ -43,33 +44,31 @@ namespace behav3d::motion_controller
   public:
     using MoveGroupSequence = moveit_msgs::action::MoveGroupSequence;
 
-    explicit PilzMotionController(const std::string &group = "ur_arm",
-                                  const std::string &root_link = "ur10e_base_link",
-                                  const std::string &eef_link = "ur10e_tool0",
-                                  bool debug = false);
+    explicit PilzMotionController(const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
     // Plan a PTP or LIN motion to a single target pose
     RobotTrajectoryPtr planTarget(const geometry_msgs::msg::PoseStamped &target,
                                   const std::string &motion_type = "PTP",
-                                  double vel_scale = 0.5,
-                                  double acc_scale = 0.5);
+                                  std::optional<double> vel_scale = std::nullopt,
+                                  std::optional<double> acc_scale = std::nullopt);
 
     // Plan a joint-space PTP motion to given joint vector
     RobotTrajectoryPtr planJoints(const std::vector<double> &joint_positions,
-                                  double vel_scale = 0.1,
-                                  double acc_scale = 0.1);
+                                  std::optional<double> vel_scale = std::nullopt,
+                                  std::optional<double> acc_scale = std::nullopt);
 
     // Plan a blended linear sequence through way-points (PILZ MotionSequence API)
     RobotTrajectoryPtr planSequence(const std::vector<geometry_msgs::msg::PoseStamped> &waypoints,
                                     double blend_radius = 0.001,
-                                    double vel_scale = 0.5,
-                                    double acc_scale = 0.5,
+                                    std::optional<double> vel_scale = std::nullopt,
+                                    std::optional<double> acc_scale = std::nullopt,
                                     double pos_tolerance = 0.001,
                                     double ori_telerance = 0.001);
 
     // Execute a prepared trajectory, optionally applying TOTG timing
+    // TODO: expose maxTCPVel
     bool executeTrajectory(const RobotTrajectoryPtr &traj,
-                           bool apply_totg = false);
+                           bool apply_totg = true);
 
     // Pose of `link` (default: eef_link_) expressed in `root_frame` (default: planning frame, usually "world");
     // falls back to eef_link_ for unknown link and to the planning frame for unknown root_frame.

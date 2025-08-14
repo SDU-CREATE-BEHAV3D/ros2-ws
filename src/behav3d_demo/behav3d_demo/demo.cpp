@@ -18,6 +18,8 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+#include <iterator>
+#include <cstdio>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/rate.hpp>
@@ -66,6 +68,18 @@ public:
 
     capture_delay_sec_ = this->declare_parameter<double>("capture_delay_sec", 0.5);
 
+    // Declare home_joints_deg parameter with empty default
+    std::vector<double> home_joints_deg = this->declare_parameter<std::vector<double>>(
+        "home_joints_deg", std::vector<double>{});
+    if (home_joints_deg.empty()) {
+      home_joints_deg = {45.0, -120.0, 120.0, -90.0, 90.0, -180.0};
+    }
+    home_joints_rad_.reserve(home_joints_deg.size());
+    std::transform(home_joints_deg.begin(), home_joints_deg.end(),
+                   std::back_inserter(home_joints_rad_),
+                   [](double deg)
+                   { return deg2rad(deg); });
+
     RCLCPP_INFO(this->get_logger(),
                 "Behav3dDemo ready. Commands: 'fibonacci_cap', 'grid_sweep', 'quit'. Capture delay: %.2fs", capture_delay_sec_);
   }
@@ -77,6 +91,8 @@ private:
   std::shared_ptr<SessionManager> sess_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_;
   double capture_delay_sec_;
+
+  std::vector<double> home_joints_rad_;
 
   void callback(const std_msgs::msg::String::SharedPtr msg)
   {
@@ -93,15 +109,8 @@ private:
 
   void home()
   {
-    // Joint‑space “home” configuration (given in degrees)
-    const std::vector<double> home_joints_deg = {45.0, -120.0, 120.0, -90.0, 90.0, -180.0};
-    std::vector<double> home_joints_rad;
-    home_joints_rad.reserve(home_joints_deg.size());
-    std::transform(home_joints_deg.begin(), home_joints_deg.end(),
-                   std::back_inserter(home_joints_rad),
-                   [](double deg)
-                   { return deg2rad(deg); });
-    auto traj = ctrl_->planJoints(home_joints_rad);
+    // Use home_joints_rad_ from parameter instead of hardcoded values
+    auto traj = ctrl_->planJoints(home_joints_rad_);
     ctrl_->executeTrajectory(traj);
   }
 
@@ -170,20 +179,21 @@ int main(int argc, char **argv)
 {
   rclcpp::init(argc, argv);
 
-  auto controller = std::make_shared<PilzMotionController>(
-      "ur_arm",
-      "world",
-      "femto__depth_optical_frame",
-      true);
-  auto visualizer = std::make_shared<MotionVisualizer>(
-      "ur_arm",
-      "world",
-      "femto__depth_optical_frame");
-  auto camera = std::make_shared<behav3d::camera_manager::CameraManager>(
-      rclcpp::NodeOptions().use_intra_process_comms(true));
+  rclcpp::NodeOptions controller_opts;
+  controller_opts.use_intra_process_comms(true);
+  auto controller = std::make_shared<PilzMotionController>(controller_opts);
 
-  auto sess = std::make_shared<behav3d::session_manager::SessionManager>(
-      rclcpp::NodeOptions().use_intra_process_comms(true), controller, visualizer, camera);
+  rclcpp::NodeOptions visualizer_opts;
+  visualizer_opts.use_intra_process_comms(true);
+  auto visualizer = std::make_shared<MotionVisualizer>(visualizer_opts);
+
+  rclcpp::NodeOptions camera_opts;
+  camera_opts.use_intra_process_comms(true);
+  auto camera = std::make_shared<behav3d::camera_manager::CameraManager>(camera_opts);
+
+  rclcpp::NodeOptions session_opts;
+  session_opts.use_intra_process_comms(true);
+  auto sess = std::make_shared<behav3d::session_manager::SessionManager>(session_opts, controller, visualizer, camera);
 
   auto demo = std::make_shared<Behav3dDemo>(controller, visualizer, camera, sess);
 
