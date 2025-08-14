@@ -551,5 +551,26 @@ namespace behav3d::motion_controller
     // Use a short IK timeout; reachable if we find a solution
     return static_cast<bool>(computeIK(pose, 0.05));
   }
+  void PilzMotionController::setEefLink(const std::string& link) {
+    if (move_group_.getRobotModel()->hasLinkModel(link)) {
+      move_group_.setEndEffectorLink(link);
+      RCLCPP_INFO(this->get_logger(), "Using EEF link: %s", link.c_str());
+    } else {
+      RCLCPP_ERROR(this->get_logger(), "EEF link '%s' not found in robot model", link.c_str());
+    }
+  }
+  PilzMotionController::PlanPtr
+  PilzMotionController::planTargetInFrame(const geometry_msgs::msg::PoseStamped& target,
+                                          const std::string& frame,
+                                          const std::string& motion_type,
+                                          std::optional<double> vel_scale,
+                                          std::optional<double> acc_scale)
+  {
+      geometry_msgs::msg::PoseStamped stamped = target;
+      stamped.header.frame_id = frame;     // override frame
+      stamped.header.stamp = this->now();  // update stamp
+
+      return planTarget(stamped, motion_type, vel_scale, acc_scale);
+  }
 
 } // namespace behav3d::motion_controller

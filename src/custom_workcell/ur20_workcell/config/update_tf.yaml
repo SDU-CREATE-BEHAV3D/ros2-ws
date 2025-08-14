@@ -1,8 +1,10 @@
 # Single TF using RPY
-parent_frame: ur20_tool0
-child_frame: femto__ir_optical_frame_calib
-xyz: [-0.20, 0.0, 0.0]        # meters
-rpy: [0.0, 0.0, 0.0]          # radians (roll, pitch, yaw)
+static_transforms:
+  - parent: ur20_tool0
+    child: femto__base_link
+    #Put your measured mount here (meters & radians)
+    xyz: [0.240, 0.000, 0.000]
+    rpy: [0.000, 0.000, 0.000]
 
 # --- OR (reference) ---
 # Multiple TFs

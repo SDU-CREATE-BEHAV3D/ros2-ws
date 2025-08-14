@@ -33,6 +33,38 @@ from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 from moveit_configs_utils import MoveItConfigsBuilder
 
+def _make_static_tf_nodes_from_yaml(yaml_path: str):
+    if not os.path.exists(yaml_path):
+        print(f"[behav3d] TF YAML not found: {yaml_path} (skipping)")
+        return []
+
+    with open(yaml_path, "r") as f:
+        data = yaml.safe_load(f) or {}
+
+    nodes = []
+    for i, tf in enumerate(data.get("static_transforms", [])):
+        parent = str(tf["parent"])
+        child  = str(tf["child"])
+        x, y, z = [str(v) for v in tf.get("xyz", [0.0, 0.0, 0.0])]
+        r, p, yw = [str(v) for v in tf.get("rpy", [0.0, 0.0, 0.0])]
+
+        args = [
+            "--x", x, "--y", y, "--z", z,
+            "--roll", r, "--pitch", p, "--yaw", yw,
+            "--frame-id", parent,
+            "--child-frame-id", child,
+        ]
+        nodes.append(
+            Node(
+                package="tf2_ros",
+                executable="static_transform_publisher",
+                name=f"static_tf_{i}_{parent.replace('/','_')}__{child.replace('/','_')}",
+                output="log",
+                arguments=args,
+            )
+        )
+    return nodes
+
 
 def generate_launch_description():
 
@@ -256,43 +288,44 @@ def generate_launch_description():
     # -------------------------------------------------------------------------
     # 6) Load frame transforms if there is hand-eye calibration
     # -------------------------------------------------------------------------
+    # --- Static TFs from a fixed YAML path (no CLI arg) ---
+    import math
+    def rpy_to_quat(r,p,y):
+        cr,sr = math.cos(r/2), math.sin(r/2)
+        cp,sp = math.cos(p/2), math.sin(p/2)
+        cy,sy = math.cos(y/2), math.sin(y/2)
+        return (sr*cp*cy - cr*sp*sy,
+                cr*sp*cy + sr*cp*sy,
+                cr*cp*sy - sr*sp*cy,
+                cr*cp*cy + sr*sp*sy)
 
-    update_tf_nodes = []
-    try:
-        cfg_path = os.path.join(
-            get_package_share_directory("ur20_workcell"),
-            "config", "update_tf.yaml"
-        )
-        if os.path.exists(cfg_path):
-            cfg = yaml.safe_load(open(cfg_path, "r")) or {}
+    # ← put your mount here (meters, radians)
+    X,Y,Z = 0.3, 0.0, 0.0
+    R,P,Y = 0.0, 0.0, 0.0
+    qx,qy,qz,qw = rpy_to_quat(R,P,Y)
 
-            # Single TF entry
-            parent = cfg.get("parent_frame", "ur20_tool0")
-            child  = cfg.get("child_frame", "femto__ir_optical_frame_calib")
-            x, y, z = (cfg.get("xyz") or [0.0, 0.0, 0.0])
+    static_tf_mount = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="static_tf_mount_tool0_to_femto_base_link",
+        output="log",
+        arguments=[
+            "--x", str(X), "--y", str(Y), "--z", str(Z),
+            "--qx", str(qx), "--qy", str(qy), "--qz", str(qz), "--qw", str(qw),
+            "--frame-id", "ur20_tool0",
+            "--child-frame-id", "femto__base_link_calib",
+        ],
+    )
 
-            args = ["--frame-id", parent, "--child-frame-id", child,
-                    "--x", str(x), "--y", str(y), "--z", str(z)]
+    # --- Robot State Publisher (URDF → TF) ---
+    robot_state_publisher = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        name="robot_state_publisher",
+        output="both",
+        parameters=[moveit_config.robot_description],
+    )
 
-            if "rpy" in cfg:
-                r, p, yw = cfg["rpy"]
-                args += ["--roll", str(r), "--pitch", str(p), "--yaw", str(yw)]
-            elif "quat" in cfg:
-                qx, qy, qz, qw = cfg["quat"]
-                args += ["--qx", str(qx), "--qy", str(qy), "--qz", str(qz), "--qw", str(qw)]
-            else:
-                # default orientation: identity
-                args += ["--qx", "0", "--qy", "0", "--qz", "0", "--qw", "1"]
-
-            update_tf_nodes.append(Node(
-                package="tf2_ros",
-                executable="static_transform_publisher",
-                name="camera_extrinsics_tf",
-                arguments=args,
-                output="log",
-            ))
-    except Exception:
-        pass
 
     # Run Main Node
     move_group_demo = Node(
@@ -345,10 +378,11 @@ def generate_launch_description():
             debug_arg,
             # Then include/launch nodes
             ur_driver,
+          # static_tf_mount,           # publish fixed TFs from YAML
+           # robot_state_publisher,      # publish URDF-based TFs
             moveit_stack,
             orbbec_camera,
             rviz_node,
             move_group_demo,
-            *update_tf_nodes
         ]
     )

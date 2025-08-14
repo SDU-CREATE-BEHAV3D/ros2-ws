@@ -43,6 +43,7 @@ namespace behav3d::motion_controller
   {
   public:
     using MoveGroupSequence = moveit_msgs::action::MoveGroupSequence;
+    using PlanPtr = std::shared_ptr<robot_trajectory::RobotTrajectory>;
 
     explicit PilzMotionController(const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
@@ -51,8 +52,13 @@ namespace behav3d::motion_controller
                                   const std::string &motion_type = "PTP",
                                   std::optional<double> vel_scale = std::nullopt,
                                   std::optional<double> acc_scale = std::nullopt);
+    PlanPtr planTargetInFrame(const geometry_msgs::msg::PoseStamped& target,
+                              const std::string& frame,
+                              const std::string& motion_type,
+                              std::optional<double> vel_scale = std::nullopt,
+                              std::optional<double> acc_scale = std::nullopt);
 
-    // Plan a joint-space PTP motion to given joint vector
+
     RobotTrajectoryPtr planJoints(const std::vector<double> &joint_positions,
                                   std::optional<double> vel_scale = std::nullopt,
                                   std::optional<double> acc_scale = std::nullopt);
@@ -101,6 +107,8 @@ namespace behav3d::motion_controller
     /// Accessors for planning‑frame links
     const std::string &getRootLink() const;
     const std::string &getEefLink() const;
+
+    void setEefLink(const std::string& link);
 
   private:
     std::string root_link_;

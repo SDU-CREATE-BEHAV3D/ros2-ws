@@ -306,7 +306,7 @@ private:
     //    matches the sweepZigzag parameter space.
     const auto center = worldXY(center_x, center_y, center_z,
                                 ctrl_->getRootLink());
-
+    ctrl_->setEefLink("femto__ir_optical_frame");   
     viz_->publishTargetPose(center);
 
     // Enforce a minimum of two waypoints per axis, per sweepZigzag’s contract.

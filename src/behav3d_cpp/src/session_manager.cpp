@@ -258,7 +258,9 @@ namespace behav3d::session_manager
       const std::string key = std::string("t") + indexString(i, 3);
 
       // ---------------- PLAN ----------------
+      ctrl_->setEefLink("ur20_tool0");  
       auto traj = ctrl_ ? ctrl_->planTarget(tgt, opts_.motion_type) : nullptr;
+      
       const bool plan_ok = (traj != nullptr);
 
       if (!plan_ok)
