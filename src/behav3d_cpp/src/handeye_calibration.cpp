@@ -127,63 +127,92 @@ namespace behav3d::handeye
       std::vector<cv::Mat> R_gripper2base, t_gripper2base;
 
       std::size_t used_local = 0;
+      std::vector<std::size_t> failed_indices;
       std::size_t dbg_idx_local = 0;
-    for (const auto &it : items)
-    {
-      const std::string &img_path = (camera_name == "color") ? it.color_path : it.ir_path;
-      HE_DEBUG(this, "[%s] Item %zu: capture_ok=%s, path='%s'", camera_name.c_str(), dbg_idx_local, it.capture_ok ? "true" : "false", img_path.c_str());
-      if (!it.capture_ok || img_path.empty())
+      for (const auto &it : items)
       {
+        const std::string &img_path = (camera_name == "color") ? it.color_path : it.ir_path;
+        HE_DEBUG(this, "[%s] Item %zu: capture_ok=%s, path='%s'", camera_name.c_str(), dbg_idx_local, it.capture_ok ? "true" : "false", img_path.c_str());
+        if (!it.capture_ok || img_path.empty())
+        {
+          failed_indices.push_back(dbg_idx_local);
+          ++dbg_idx_local;
+          continue;
+        }
+
+        // Ensure this file resides within the active session directory
+        {
+          std::error_code ec;
+          fs::path sessc = fs::weakly_canonical(session_dir, ec);
+          if (ec) sessc = session_dir;
+          fs::path pc = fs::weakly_canonical(img_path, ec);
+          if (ec) pc = img_path;
+          auto sesss = sessc.string();
+          auto pcs   = pc.string();
+#ifdef _WIN32
+          auto tolower_str = [](std::string s){ for(char &c: s) c=(char)std::tolower((unsigned char)c); return s; };
+          sesss = tolower_str(sesss);
+          pcs   = tolower_str(pcs);
+#endif
+          if (!(pcs.size() >= sesss.size() && pcs.rfind(sesss, 0) == 0)) {
+            HE_WARN(this, "[%s] Item %zu: path outside session dir: '%s' — skipping", camera_name.c_str(), dbg_idx_local, img_path.c_str());
+            failed_indices.push_back(dbg_idx_local);
+            ++dbg_idx_local;
+            continue;
+          }
+        }
+
+        int imread_flag = (camera_name == "ir") ? cv::IMREAD_UNCHANGED : cv::IMREAD_COLOR;
+        // Existence guard before imread to avoid fallback behavior
+        if (!fs::exists(img_path)) {
+          HE_DEBUG(this, "[%s] Item %zu: file does not exist '%s'", camera_name.c_str(), dbg_idx_local, img_path.c_str());
+          failed_indices.push_back(dbg_idx_local);
+          ++dbg_idx_local;
+          continue;
+        }
+        cv::Mat img = cv::imread(img_path, imread_flag);
+        if (img.empty())
+        {
+          HE_DEBUG(this, "[%s] Item %zu: cv::imread failed for '%s'", camera_name.c_str(), dbg_idx_local, img_path.c_str());
+          failed_indices.push_back(dbg_idx_local);
+          ++dbg_idx_local;
+          continue;
+        }
+
+        cv::Mat rvec, tvec;
+        HE_DEBUG(this, "[%s] Item %zu: running Charuco detection", camera_name.c_str(), dbg_idx_local);
+        if (!detect_charuco(img, K, D, rvec, tvec, visualize_))
+        {
+          HE_DEBUG(this, "[%s] Item %zu: Charuco detection failed", camera_name.c_str(), dbg_idx_local);
+          failed_indices.push_back(dbg_idx_local);
+          ++dbg_idx_local;
+          continue;
+        }
+        HE_DEBUG(this, "[%s] Item %zu: Charuco detection OK", camera_name.c_str(), dbg_idx_local);
+
+        cv::Mat Rtc; // target->cam rotation
+        cv::Rodrigues(rvec, Rtc);
+        R_target2cam.push_back(Rtc);
+        t_target2cam.push_back(tvec.clone());
+
+        // base->gripper from manifest, invert to gripper->base
+        const auto &pose = it.tool0_pose.pose; // base->tool0
+        cv::Mat R_b2g = quat_to_R(pose);
+        cv::Mat t_b2g = vec3_to_t(pose);
+        cv::Mat R_g2b = R_b2g.t();
+        cv::Mat t_g2b = -R_b2g.t() * t_b2g;
+        R_gripper2base.push_back(R_g2b);
+        t_gripper2base.push_back(t_g2b);
+
+        ++used_local;
         ++dbg_idx_local;
-        continue;
       }
 
-      int imread_flag = (camera_name == "ir") ? cv::IMREAD_UNCHANGED : cv::IMREAD_COLOR;
-      // Existence guard before imread to avoid fallback behavior
-      if (!fs::exists(img_path)) {
-        HE_DEBUG(this, "[%s] Item %zu: file does not exist '%s'", camera_name.c_str(), dbg_idx_local, img_path.c_str());
-        ++dbg_idx_local;
-        continue;
-      }
-      cv::Mat img = cv::imread(img_path, imread_flag);
-      if (img.empty())
-      {
-        HE_DEBUG(this, "[%s] Item %zu: cv::imread failed for '%s'", camera_name.c_str(), dbg_idx_local, img_path.c_str());
-        ++dbg_idx_local;
-        continue;
-      }
-
-      cv::Mat rvec, tvec;
-      HE_DEBUG(this, "[%s] Item %zu: running Charuco detection", camera_name.c_str(), dbg_idx_local);
-      if (!detect_charuco(img, K, D, rvec, tvec, visualize_))
-      {
-        HE_DEBUG(this, "[%s] Item %zu: Charuco detection failed", camera_name.c_str(), dbg_idx_local);
-        ++dbg_idx_local;
-        continue;
-      }
-      HE_DEBUG(this, "[%s] Item %zu: Charuco detection OK", camera_name.c_str(), dbg_idx_local);
-
-      cv::Mat Rtc; // target->cam rotation
-      cv::Rodrigues(rvec, Rtc);
-      R_target2cam.push_back(Rtc);
-      t_target2cam.push_back(tvec.clone());
-
-      // base->gripper from manifest, invert to gripper->base
-      const auto &pose = it.tool0_pose.pose; // base->tool0
-      cv::Mat R_b2g = quat_to_R(pose);
-      cv::Mat t_b2g = vec3_to_t(pose);
-      cv::Mat R_g2b = R_b2g.t();
-      cv::Mat t_g2b = -R_b2g.t() * t_b2g;
-      R_gripper2base.push_back(R_g2b);
-      t_gripper2base.push_back(t_g2b);
-
-      ++used_local;
-      ++dbg_idx_local;
-    }
+      HE_INFO(this, "[%s] Summary: used=%zu, failed/skipped=%zu", camera_name.c_str(), used_local, failed_indices.size());
 
       if (R_target2cam.size() < 3 || R_gripper2base.size() != R_target2cam.size())
       {
-        HE_ERROR(this, "[%s] Not enough valid image/pose pairs: %zu", camera_name.c_str(), R_target2cam.size());
+        HE_ERROR(this, "[%s] Not enough valid image/pose pairs (need ≥3). Collected=%zu. Skipping calibration for this camera.", camera_name.c_str(), R_target2cam.size());
         return false;
       }
 
@@ -329,6 +358,14 @@ namespace behav3d::handeye
     if (!root.contains("captures") || !root["captures"].is_array())
       return false;
 
+    // Canonical path of the active session for containment checks
+    fs::path session_dir_canon;
+    {
+      std::error_code ec;
+      session_dir_canon = fs::weakly_canonical(session_dir, ec);
+      if (ec) session_dir_canon = session_dir; // fallback
+    }
+
     for (const auto &entry : root["captures"])
     {
       CaptureItem ci;
@@ -354,6 +391,27 @@ namespace behav3d::handeye
 
         ci.color_path = make_abs(ci.color_path);
         ci.ir_path    = make_abs(ci.ir_path);
+
+        // Containment guard: ensure paths are under the active session directory
+        auto within_session = [&](const std::string &p) -> bool {
+          if (p.empty()) return false;
+          std::error_code ec;
+          fs::path pc = fs::weakly_canonical(p, ec);
+          if (ec) pc = fs::path(p);
+          auto sess = session_dir_canon.string();
+          auto pcs  = pc.string();
+          if (pcs.size() < sess.size()) return false;
+          return pcs.rfind(sess, 0) == 0; // starts with session dir
+        };
+
+        if (!ci.color_path.empty() && !within_session(ci.color_path)) {
+          HE_WARN(this, "[manifest] Color path points outside session: '%s' — skipping.", ci.color_path.c_str());
+          ci.color_path.clear();
+        }
+        if (!ci.ir_path.empty() && !within_session(ci.ir_path)) {
+          HE_WARN(this, "[manifest] IR path points outside session: '%s' — skipping.", ci.ir_path.c_str());
+          ci.ir_path.clear();
+        }
 
         // Validate existence to avoid accidentally picking up similarly named files elsewhere
         if (!ci.color_path.empty() && !fs::exists(ci.color_path)) {
